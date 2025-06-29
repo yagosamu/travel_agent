@@ -58,6 +58,12 @@ language = languages[language_human]
 destination = st.text_input("Para onde você quer viajar?")
 num_days = st.number_input("Quantos dias de viagem?", min_value=1, max_value=30, value=7)
 
+# Caixa de locais de interesse (opcional)
+interest_places = st.text_input(
+    "Deseja que um ou mais locais específicos estejam presentes no roteiro? Escreva aqui (opcional)",
+    help="Se desejar, informe um ou mais pontos de interesse (separados por vírgula) para tentar incluir no roteiro. Exemplo: Torre Eiffel, Louvre"
+)
+
 if openai_api_key and serp_api_key and unsplash_access_key:
     researcher = Agent(
         name="Researcher",
@@ -82,7 +88,16 @@ if openai_api_key and serp_api_key and unsplash_access_key:
         add_datetime_to_instructions=True,
     )
 
-    # PROMPT atualizado para garantir resumo e detalhe entre 3 e 5 linhas e orçamento total só ao final
+    # Adapta o prompt para incluir os locais de interesse se informados
+    interest_instruction = ""
+    if interest_places.strip():
+        # Passa a instrução para o modelo garantir os pontos no roteiro SE forem compatíveis (mesmo país)
+        interest_instruction = (
+            f"\n- O usuário informou os seguintes locais de interesse: {interest_places.strip()}. "
+            "Se algum desses locais estiver no mesmo país do destino, inclua-os explicitamente no roteiro como uma das atividades do(s) dia(s)."
+            "Se não estiverem no mesmo país, ignore-os e siga normalmente."
+        )
+
     planner_prompt_instructions = dedent(f"""
     Você é um especialista em viagens, responsável por criar roteiros personalizados de alta qualidade para {profile_human} ({profile}) em {language_human}.
     Para cada dia do roteiro, crie:
@@ -90,6 +105,7 @@ if openai_api_key and serp_api_key and unsplash_access_key:
     - Um resumo do dia, entre 3 e 5 linhas, descrevendo as principais atividades e experiências, de forma clara, envolvente e objetiva.
     - Um orçamento estimado para o dia (apenas o valor numérico, ex: 150).
     - Um detalhe histórico ou cultural sobre o local principal das atividades do dia, entre 3 e 5 linhas, interessante, relevante e que aprofunde o entendimento sobre o destino.
+    {interest_instruction}
 
     Estruture cada dia exatamente assim (no idioma do usuário):
 
@@ -151,8 +167,9 @@ if openai_api_key and serp_api_key and unsplash_access_key:
                     f"Duração: {num_days} dias\n"
                     f"Perfil de viagem: {profile} ({profile_human})\n"
                     f"Idioma do roteiro: {language} ({language_human})\n"
+                    f"Locais de interesse: {interest_places.strip() if interest_places.strip() else 'Nenhum informado'}\n"
                     f"Resultados da pesquisa: {research_results.content}\n\n"
-                    f"Por favor, siga exatamente as instruções fornecidas para criar um roteiro detalhado e organizado, incluindo orçamento diário, detalhe histórico/cultural (entre 3 e 5 linhas), resumo do dia (entre 3 e 5 linhas) e o orçamento total apenas ao final."
+                    f"Por favor, siga exatamente as instruções fornecidas para criar um roteiro detalhado e organizado, incluindo orçamento diário, detalhe histórico/cultural (entre 3 e 5 linhas), resumo do dia (entre 3 e 5 linhas), os locais de interesse se forem no mesmo país do destino, e o orçamento total apenas ao final."
                 )
                 response = planner.run(planner_prompt, stream=False)
                 st.success("✓ Roteiro criado!")
