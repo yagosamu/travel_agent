@@ -15,10 +15,10 @@ def buscar_imagem_unsplash(query, unsplash_access_key):
         "client_id": unsplash_access_key
     }
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=7)
         if response.status_code == 200:
             data = response.json()
-            return data["urls"]["small"]
+            return data["urls"]["regular"]
     except Exception:
         pass
     return ""
@@ -82,27 +82,40 @@ if openai_api_key and serp_api_key and unsplash_access_key:
         add_datetime_to_instructions=True,
     )
 
-    # PROMPT para o modelo gerar apenas o texto dos dias
+    # PROMPT atualizado para garantir resumo e detalhe entre 3 e 5 linhas e orçamento total só ao final
     planner_prompt_instructions = dedent(f"""
     Você é um especialista em viagens, responsável por criar roteiros personalizados de alta qualidade para {profile_human} ({profile}) em {language_human}.
-    Para cada dia do roteiro, crie um título curto e objetivo para o dia, seguido de uma breve descrição das atividades e experiências desse dia.
+    Para cada dia do roteiro, crie:
+    - Um título curto e objetivo para o dia.
+    - Um resumo do dia, entre 3 e 5 linhas, descrevendo as principais atividades e experiências, de forma clara, envolvente e objetiva.
+    - Um orçamento estimado para o dia (apenas o valor numérico, ex: 150).
+    - Um detalhe histórico ou cultural sobre o local principal das atividades do dia, entre 3 e 5 linhas, interessante, relevante e que aprofunde o entendimento sobre o destino.
 
     Estruture cada dia exatamente assim (no idioma do usuário):
 
     Dia X: [Título do dia]
-    [Descrição do dia, curta e objetiva, que explique as atividades e experiências.]
+    Resumo: [Resumo do dia, entre 3 e 5 linhas.]
+    Orçamento estimado: [valor, ex: 150]
+    Detalhe histórico/cultural: [curiosidade ou fato, entre 3 e 5 linhas.]
 
     Regras:
     - O título deve ser uma frase curta (exemplo: 'Passeio pelo centro histórico', 'Aventura nas trilhas', 'Dia em família no parque aquático').
-    - O texto deve ser sempre claro, objetivo e útil para o viajante, refletindo o perfil da viagem, as preferências do usuário e o idioma escolhido.
+    - O resumo deve ter entre 3 e 5 linhas, ser prático, informativo e útil para o viajante, refletindo o perfil da viagem, as preferências do usuário e o idioma escolhido.
+    - O orçamento deve ser sempre apenas o valor numérico do dia, sem símbolos, texto ou moeda.
+    - O detalhe histórico/cultural deve ser interessante, relevante e conter entre 3 e 5 linhas.
     - O roteiro deve ser visualmente organizado e fácil de ler, com cada dia separado pelo cabeçalho “Dia X: [Título]”.
 
     Exemplo de resposta para um dia (em português):
 
     Dia 1: Passeio pelo centro histórico
-    Visita aos principais pontos turísticos do centro, incluindo museus e igrejas, seguido de almoço em restaurante típico.
+    Resumo: Explore as ruas antigas do centro histórico, visitando museus e igrejas emblemáticas da cidade. Experimente um almoço típico em restaurante tradicional e aproveite o clima acolhedor das praças. Tire fotos em pontos turísticos famosos e aproveite para conhecer lojas de artesanato local. Finalize o dia com uma caminhada ao entardecer pelas alamedas arborizadas.
+    Orçamento estimado: 180
+    Detalhe histórico/cultural: O centro histórico da cidade reúne construções do século XIX e XX, testemunhando diferentes fases da urbanização local. A principal igreja foi palco de importantes acontecimentos políticos e sociais. Muitas ruas mantêm o calçamento original de pedra portuguesa. A região preserva traços da colonização europeia, visíveis na arquitetura e nos costumes. O artesanato local é reconhecido como patrimônio cultural, sendo transmitido por gerações.
 
     Repita essa estrutura para todos os dias, sempre adaptando para o idioma e perfil especificado.
+
+    Ao final, some e mostre o orçamento total estimado para a viagem neste formato (em {language_human}):
+    Orçamento total estimado: [valor total]
     """)
 
     planner = Agent(
@@ -139,30 +152,69 @@ if openai_api_key and serp_api_key and unsplash_access_key:
                     f"Perfil de viagem: {profile} ({profile_human})\n"
                     f"Idioma do roteiro: {language} ({language_human})\n"
                     f"Resultados da pesquisa: {research_results.content}\n\n"
-                    f"Por favor, siga exatamente as instruções fornecidas para criar um roteiro detalhado e organizado (sem imagens, apenas títulos e descrições)."
+                    f"Por favor, siga exatamente as instruções fornecidas para criar um roteiro detalhado e organizado, incluindo orçamento diário, detalhe histórico/cultural (entre 3 e 5 linhas), resumo do dia (entre 3 e 5 linhas) e o orçamento total apenas ao final."
                 )
                 response = planner.run(planner_prompt, stream=False)
                 st.success("✓ Roteiro criado!")
 
+                content = response.content
+                if isinstance(content, bytes):
+                    content = content.decode("utf-8")
+
                 # Parsing robusto do roteiro
-                # Busca todos os blocos "Dia X: Título"
-                dias = re.split(r'\bDia (\d+):\s*([^\n]+)', response.content, flags=re.IGNORECASE)
+                dias = re.split(r'\bDia (\d+):\s*([^\n]+)', content, flags=re.IGNORECASE)
+
+                orcamento_total = 0.0
+                orcamento_total_modelo = None
 
                 if len(dias) > 2:
-                    for i in range(1, len(dias), 3):
-                        dia_num = dias[i]
-                        dia_titulo = dias[i+1].strip()
-                        dia_descricao = dias[i+2].strip()
-                        # Busca imagem real no Unsplash usando o título do dia
-                        img_url = buscar_imagem_unsplash(dia_titulo, unsplash_access_key)
+                    for i in range(1, len(dias)-1, 3):
+                        try:
+                            dia_num = dias[i]
+                            dia_titulo = dias[i+1].strip()
+                            dia_conteudo = dias[i+2].strip()
 
-                        # Layout: imagem pequena ao lado do texto
-                        col1, col2 = st.columns([1, 5])
-                        with col1:
-                            if img_url:
-                                st.image(img_url, width=110)
-                        with col2:
-                            st.markdown(f"**Dia {dia_num}: {dia_titulo}**")
-                            st.write(dia_descricao)
+                            resumo_match = re.search(r'Resumo:\s*(.*)', dia_conteudo)
+                            orcamento_match = re.search(r'Orçamento estimado:\s*([\d\.,]+)', dia_conteudo)
+                            detalhe_match = re.search(r'Detalhe histórico/cultural:\s*(.*)', dia_conteudo, re.DOTALL)
+
+                            dia_resumo = resumo_match.group(1).strip() if resumo_match else ""
+                            dia_orcamento = orcamento_match.group(1).replace(',', '.').strip() if orcamento_match else "0"
+                            try:
+                                orcamento_float = float(dia_orcamento)
+                            except Exception:
+                                orcamento_float = 0.0
+                            orcamento_total += orcamento_float
+                            dia_detalhe = detalhe_match.group(1).strip() if detalhe_match else ""
+
+                            # Busca imagem real no Unsplash usando o título do dia
+                            img_url = buscar_imagem_unsplash(dia_titulo, unsplash_access_key)
+
+                            col1, col2 = st.columns([2, 5])
+                            with col1:
+                                if img_url:
+                                    st.image(img_url, width=280)
+                            with col2:
+                                st.markdown(f"**Dia {dia_num}: {dia_titulo}**")
+                                st.write(dia_resumo)
+                                st.markdown(f"**Orçamento estimado:** R$ {orcamento_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+                                if dia_detalhe:
+                                    with st.expander("Detalhes históricos e culturais"):
+                                        st.write(dia_detalhe)
+                        except Exception as e:
+                            st.warning(f"Não foi possível processar o dia {(i//3)+1}: {e}")
+
+                    # Orçamento total do modelo (caso ele forneça)
+                    orcamento_total_match = re.search(r'Orçamento total estimado:\s*([\d\.,]+)', content)
+                    if orcamento_total_match:
+                        try:
+                            orcamento_total_modelo = float(orcamento_total_match.group(1).replace(',', '.'))
+                        except Exception:
+                            orcamento_total_modelo = None
+
+                    st.markdown("---")
+                    st.markdown(f"## Orçamento total estimado: R$ {orcamento_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+                    if orcamento_total_modelo is not None and abs(orcamento_total - orcamento_total_modelo) > 1:
+                        st.info(f"Orçamento total do modelo: R$ {orcamento_total_modelo:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
                 else:
-                    st.write(response.content)
+                    st.write(content)
